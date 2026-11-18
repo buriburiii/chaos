@@ -114,7 +114,7 @@
         </div>
 
         <!-- Types Badges -->
-        <div id="type Badges" class="flex flex-wrap justify-center gap-2 mt-3"></div>
+        <div id="typeBadges" class="flex flex-wrap justify-center gap-2 mt-3"></div>
       </div>
 
       <!-- Forms Selector Container -->
@@ -161,6 +161,38 @@
           </div>
         </div>
       </div>
+
+      <!-- Type Effectiveness & Weaknesses Section -->
+      <div class="px-6 sm:px-8 pb-8 pt-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+        <h3 class="text-base font-bold mb-4 flex items-center gap-2">
+          <i class="fa-solid fa-shield-halved text-indigo-500"></i> Defensive Type Effectiveness
+        </h3>
+        <div id="effectivenessContainer" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <!-- Weaknesses (2x / 4x) -->
+          <div class="p-4 rounded-2xl bg-white dark:bg-slate-800/60 border border-rose-200/70 dark:border-rose-900/40">
+            <span class="text-xs font-extrabold text-rose-500 uppercase tracking-wider flex items-center gap-1.5 mb-3">
+              <i class="fa-solid fa-arrow-trend-up"></i> Weak To (2× / 4×)
+            </span>
+            <div id="weaknessesList" class="flex flex-wrap gap-1.5"></div>
+          </div>
+
+          <!-- Resistances (0.5x / 0.25x) -->
+          <div class="p-4 rounded-2xl bg-white dark:bg-slate-800/60 border border-emerald-200/70 dark:border-emerald-900/40">
+            <span class="text-xs font-extrabold text-emerald-500 uppercase tracking-wider flex items-center gap-1.5 mb-3">
+              <i class="fa-solid fa-arrow-trend-down"></i> Resistant To (½× / ¼×)
+            </span>
+            <div id="resistancesList" class="flex flex-wrap gap-1.5"></div>
+          </div>
+
+          <!-- Immunities (0x) -->
+          <div class="p-4 rounded-2xl bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60">
+            <span class="text-xs font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5 mb-3">
+              <i class="fa-solid fa-ban"></i> Immune To (0×)
+            </span>
+            <div id="immunitiesList" class="flex flex-wrap gap-1.5"></div>
+          </div>
+        </div>
+      </div>
     </div>
   </main>
 
@@ -196,6 +228,9 @@
       dark: 'bg-slate-800 text-white'
     };
 
+    const allTypes = Object.keys(typeColors);
+    const typeCache = {}; // Cache PokéAPI type damage relations
+
     let currentPokemonId = 1;
     let currentSpeciesData = null;
     let allPokemonList = [];
@@ -214,12 +249,15 @@
     const pokeName = document.getElementById('pokeName');
     const pokeId = document.getElementById('pokeId');
     const pokeImg = document.getElementById('pokeImg');
-    const typeBadges = document.getElementById('type Badges');
+    const typeBadges = document.getElementById('typeBadges');
     const pokeHeight = document.getElementById('pokeHeight');
     const pokeWeight = document.getElementById('pokeWeight');
     const statsContainer = document.getElementById('statsContainer');
     const abilitiesContainer = document.getElementById('abilitiesContainer');
     const formsContainer = document.getElementById('formsContainer');
+    const weaknessesList = document.getElementById('weaknessesList');
+    const resistancesList = document.getElementById('resistancesList');
+    const immunitiesList = document.getElementById('immunitiesList');
     const cryBtn = document.getElementById('cryBtn');
 
     // Preload all Pokémon names for autocomplete suggestions
@@ -285,7 +323,7 @@
         currentSpeciesData = await speciesRes.json();
 
         currentPokemonId = currentSpeciesData.id;
-        renderPokemonData(pokeData);
+        await renderPokemonData(pokeData);
         renderFormsList(pokeData.name);
 
         showCard();
@@ -300,7 +338,7 @@
         const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${formName}`);
         if (!res.ok) return;
         const data = await res.json();
-        renderPokemonData(data);
+        await renderPokemonData(data);
         updateActiveFormBadge(formName);
       } catch (err) {
         console.error("Could not fetch form:", err);
@@ -350,8 +388,83 @@
       });
     }
 
+    // Fetch & Cache Type Damage Relations from PokéAPI
+    async function getTypeRelations(typeName) {
+      if (typeCache[typeName]) return typeCache[typeName];
+      const res = await fetch(`https://pokeapi.co/api/v2/type/${typeName}`);
+      const data = await res.json();
+      typeCache[typeName] = data.damage_relations;
+      return data.damage_relations;
+    }
+
+    // Calculate Combined Type Effectiveness for 1 or 2 Types
+    async function renderTypeEffectiveness(typesArray) {
+      weaknessesList.innerHTML = '<span class="text-xs text-slate-400">Calculating...</span>';
+      resistancesList.innerHTML = '';
+      immunitiesList.innerHTML = '';
+
+      // Initialize every attacking type multiplier at 1x
+      const multipliers = {};
+      allTypes.forEach(t => multipliers[t] = 1);
+
+      for (const tObj of typesArray) {
+        const relations = await getTypeRelations(tObj.type.name);
+        relations.double_damage_from.forEach(t => {
+          if (multipliers[t.name] !== undefined) multipliers[t.name] *= 2;
+        });
+        relations.half_damage_from.forEach(t => {
+          if (multipliers[t.name] !== undefined) multipliers[t.name] *= 0.5;
+        });
+        relations.no_damage_from.forEach(t => {
+          if (multipliers[t.name] !== undefined) multipliers[t.name] *= 0;
+        });
+      }
+
+      const weak = [];
+      const resist = [];
+      const immune = [];
+
+      Object.entries(multipliers).forEach(([type, mult]) => {
+        if (mult === 0) immune.push({ type, mult });
+        else if (mult > 1) weak.push({ type, mult });
+        else if (mult < 1) resist.push({ type, mult });
+      });
+
+      // Sort highest weakness first (4x before 2x) and strongest resistance first (0.25x before 0.5x)
+      weak.sort((a, b) => b.mult - a.mult);
+      resist.sort((a, b) => a.mult - b.mult);
+
+      const formatMult = (m) => {
+        if (m === 0.5) return '½×';
+        if (m === 0.25) return '¼×';
+        return `${m}×`;
+      };
+
+      const renderBadge = (item) => {
+        const colorClass = typeColors[item.type] || 'bg-slate-500 text-white';
+        return `
+          <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-extrabold uppercase tracking-wide ${colorClass} shadow-sm">
+            ${item.type}
+            <span class="bg-black/25 px-1.5 py-0.5 rounded text-[10px]">${formatMult(item.mult)}</span>
+          </span>
+        `;
+      };
+
+      weaknessesList.innerHTML = weak.length
+        ? weak.map(renderBadge).join('')
+        : '<span class="text-xs text-slate-400 italic">None</span>';
+
+      resistancesList.innerHTML = resist.length
+        ? resist.map(renderBadge).join('')
+        : '<span class="text-xs text-slate-400 italic">None</span>';
+
+      immunitiesList.innerHTML = immune.length
+        ? immune.map(renderBadge).join('')
+        : '<span class="text-xs text-slate-400 italic">None</span>';
+    }
+
     // Populate Pokémon UI Card
-    function renderPokemonData(data) {
+    async function renderPokemonData(data) {
       pokeId.textContent = `#${String(data.id).padStart(4, '0')}`;
       pokeName.textContent = data.name.replace('-', ' ');
 
@@ -398,6 +511,9 @@
           </div>
         `;
       }).join('');
+
+      // Render Defensive Type Effectiveness based on current Pokémon/Form's typing
+      await renderTypeEffectiveness(data.types);
 
       // Cry Audio Setup
       const cryUrl = data.cries?.latest || data.cries?.legacy;
